@@ -1,0 +1,48 @@
+# Terraform working directories
+**/.terraform/
+
+# Terraform state and state backups
+*.tfstate
+*.tfstate.*
+
+# Terraform saved plans
+*.tfplan
+*.tfplan.*
+
+# Terraform crash logs
+crash.log
+crash.*.log
+
+# Terraform override files
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Sensitive variable files
+*.tfvars
+*.tfvars.json
+
+# Terraform dependency lock files
+# Preserves your existing choice to ignore these files
+**/.terraform.lock.hcl
+
+# Local Terraform CLI configuration and credentials
+.terraformrc
+terraform.rc
+credentials.tfrc.json
+
+# Local version-manager configuration
+**/.tool-versions
+
+# Generated files
+**/local_dir/
+**/generated/
+
+# Editor and assistant configuration
+**/.vscode/
+**/.claude/
+
+# Operating-system files
+.DS_Store
+Thumbs.db

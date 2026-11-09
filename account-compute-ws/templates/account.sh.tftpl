@@ -1,0 +1,45 @@
+#!/bin/bash
+set -e
+
+# Create the service user and application directory.
+useradd --system --user-group --shell /usr/sbin/nologin account
+
+mkdir -p /opt/account
+chown account:account /opt/account
+chmod 750 /opt/account
+
+# Wait for S3 endpoint access and the bucket policy during the first deployment.
+until curl -fL -o /opt/account/account \
+  "https://${artifacts_bucket}.s3.${region}.amazonaws.com/account"; do
+  sleep 10
+done
+
+chown account:account /opt/account/account
+chmod 755 /opt/account/account
+
+# Create the systemd service.
+cat > /etc/systemd/system/account.service <<'SERVICE'
+[Unit]
+Description=Account Service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=account
+Group=account
+WorkingDirectory=/opt/account
+Environment="MESSAGE=Welcome to account-service"
+Environment="NAME=account"
+Environment="LISTEN_ADDR=0.0.0.0:9090"
+Environment="UPSTREAM_URIS=${upstream_url}"
+ExecStart=/opt/account/account
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+systemctl daemon-reload
+systemctl enable --now account

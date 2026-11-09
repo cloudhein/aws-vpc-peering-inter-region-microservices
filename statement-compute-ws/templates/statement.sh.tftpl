@@ -1,0 +1,44 @@
+#!/bin/bash
+set -e
+
+# Create the service user and application directory.
+useradd --system --user-group --shell /usr/sbin/nologin statement
+
+mkdir -p /opt/statement
+chown statement:statement /opt/statement
+chmod 750 /opt/statement
+
+# Wait for S3 endpoint access and the bucket policy during the first deployment.
+until curl -fL -o /opt/statement/statement \
+  "https://${artifacts_bucket}.s3.${region}.amazonaws.com/statement"; do
+  sleep 10
+done
+
+chown statement:statement /opt/statement/statement
+chmod 755 /opt/statement/statement
+
+# Create the systemd service.
+cat > /etc/systemd/system/statement.service <<'SERVICE'
+[Unit]
+Description=Statement Service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=statement
+Group=statement
+WorkingDirectory=/opt/statement
+Environment="MESSAGE=Welcome to statement-service"
+Environment="NAME=statement"
+Environment="LISTEN_ADDR=0.0.0.0:9090"
+ExecStart=/opt/statement/statement
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+systemctl daemon-reload
+systemctl enable --now statement

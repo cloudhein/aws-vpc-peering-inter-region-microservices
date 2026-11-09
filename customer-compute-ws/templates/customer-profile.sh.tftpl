@@ -1,0 +1,45 @@
+#!/bin/bash
+set -e
+
+# Create the service user and application directory.
+useradd --system --user-group --shell /usr/sbin/nologin customer-profile
+
+mkdir -p /opt/customer-profile
+chown customer-profile:customer-profile /opt/customer-profile
+chmod 750 /opt/customer-profile
+
+# Wait for S3 endpoint access and the bucket policy during the first deployment.
+until curl -fL -o /opt/customer-profile/customer-profile \
+  "https://${artifacts_bucket}.s3.${region}.amazonaws.com/customer-profile"; do
+  sleep 10
+done
+
+chown customer-profile:customer-profile /opt/customer-profile/customer-profile
+chmod 755 /opt/customer-profile/customer-profile
+
+# Create the systemd service.
+cat > /etc/systemd/system/customer-profile.service <<'SERVICE'
+[Unit]
+Description=Customer Profile Service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=customer-profile
+Group=customer-profile
+WorkingDirectory=/opt/customer-profile
+Environment="MESSAGE=Welcome to customer-profile-service"
+Environment="NAME=customer-profile"
+Environment="LISTEN_ADDR=0.0.0.0:9090"
+Environment="UPSTREAM_URIS=${upstream_url}"
+ExecStart=/opt/customer-profile/customer-profile
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+systemctl daemon-reload
+systemctl enable --now customer-profile

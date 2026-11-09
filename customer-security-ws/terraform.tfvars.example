@@ -1,0 +1,3 @@
+# Set only the public half here. The private half remains in Secrets Manager.
+ssh_public_key = "ssh-ed25519 REPLACE-WITH-YOUR-PUBLIC-KEY"
+# ssh_key_name = "microservices-shared"

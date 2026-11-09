@@ -1,0 +1,3 @@
+# Copy to terraform.tfvars locally, or set this Terraform variable in HCP.
+certificate_arn = "arn:aws:acm:ap-southeast-1:374549652609:certificate/REPLACE-ME"
+# ami_id = "ami-REPLACE-ME"
