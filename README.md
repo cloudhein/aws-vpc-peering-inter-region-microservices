@@ -5,27 +5,22 @@ Three microservices communicate across separate VPCs in **Singapore (`ap-southea
 The architecture combines explicit subnet routing, controlled inbound and outbound traffic, private service discovery, and HTTPS communication between services. Terraform manages each infrastructure layer through a separate HCP Terraform workspace, with OIDC-based AWS authentication and OPA policy checks before deployment.
 
 **Original intra-region reference repository:** [cloudhein/aws-vpc-peering-intra-region-microservices](https://github.com/cloudhein/aws-vpc-peering-intra-region-microservices)  
-**HCP Terraform organization:** `vpc-peering-intra-region-microservices`
+**HCP Terraform organization:** `vpc-peering-inter-region-microservices`
 
 ## Inter-Region Configuration
 
-| Service | Region | Existing artifact bucket | Object key |
+| Service | Region | Artifact bucket | Object key |
 |---|---|---|---|
 | Customer Profile | Singapore (`ap-southeast-1`) | `customer-374549652609-ap-southeast-1-an` | `customer-profile` |
 | Account | Malaysia (`ap-southeast-5`) | `account-374549652609-ap-southeast-5-an` | `account` |
 | Statement | Tokyo (`ap-northeast-1`) | `statement-374549652609-ap-northeast-1-an` | `statement` |
 
-The network, security, and compute workspace defaults match this table. Update any existing HCP `region` variables or variable sets that override these defaults. Enable Malaysia in the AWS account before deployment. The peering and artifact-policy workspaces use their default AWS provider for Singapore and aliased providers for Malaysia and Tokyo, reading those Regions from the network outputs. Their AWS roles must have permission to manage the resources in all three Regions.
+This deployment extends the intra-region architecture across three Regions within the same AWS account:
 
-The HCP organization name and existing project tags remain `vpc-peering-intra-region-microservices`. Only the peering folder and HCP workspace name change to `vpc-peering-inter-region-ws`; update that workspace's working directory and any existing runner variable override. This configuration does not create or rename HCP workspaces. Use separate workspace states for this inter-region deployment; changing Region defaults does not move resources already managed in Singapore.
-
-Keep `certificate_arn` in each compute workspace's HCP Terraform variables. Each certificate must exist in its service's Region and cover that service's DNS name. Set Customer and Account `upstream_url` to their HTTPS URLs in HCP when HTTPS is required; the existing HTTP defaults are unchanged. Any pinned `ami_id` must also belong to that workspace's Region.
-
-Create or replicate the existing `microservices/ssh-public-key` Secrets Manager secret in all three Regions, containing the same public SSH key. Each compute workspace creates its own regional `microservices-ssh-key` key pair. Import any existing key pair into that workspace before applying if it already exists.
-
-The artifact-policy workspace manages the complete policy on each of the three existing buckets. Review any existing policies before applying, and import policies already managed outside this configuration as needed. Downloads and bucket listing outside the matching VPC endpoint are denied, including console downloads; uploads and bucket-policy management are not denied by these rules. The existing unsigned HTTPS `curl` downloads remain supported by the endpoint-conditioned bucket policies and endpoint policies.
-
-The screenshots below are retained from the original intra-region deployment; they are reference images, not validation of this inter-region deployment.
+- **Regional artifacts:** each service downloads its binary from an S3 bucket in its own Region through a local gateway endpoint.
+- **Regional certificates:** each ALB uses a private CA-signed certificate imported into ACM in the same Region.
+- **Regional SSH keys:** each compute workspace reads its public key from regional Secrets Manager and creates its own EC2 key pair.
+- **Independent compute workspaces:** Customer, Account, and Statement can run after peering completes, without a Statement-first dependency.
 
 ## Contents
 
@@ -35,6 +30,7 @@ The screenshots below are retained from the original intra-region deployment; th
 - [Routing and VPC Isolation](#routing-and-vpc-isolation)
 - [Security Group Controls](#security-group-controls)
 - [Private Application Delivery from S3](#private-application-delivery-from-s3)
+- [Regional SSH Key Management](#regional-ssh-key-management)
 - [Remote Execution Workflow](#remote-execution-workflow)
 - [Dynamic AWS Credentials with OIDC](#dynamic-aws-credentials-with-oidc)
 - [OPA Policy Checks](#opa-policy-checks)
@@ -51,14 +47,14 @@ The screenshots below are retained from the original intra-region deployment; th
 ```mermaid
 flowchart LR
     U[Internet client] -->|HTTPS 443| CLB
-    subgraph C[Customer VPC — 10.0.0.0/16]
+    subgraph C[Customer VPC — Singapore — 10.0.0.0/16]
         CLB[Public Customer ALB] -->|HTTP 9090| CP[Customer Profile EC2]
         J[Public jump host] -->|SSH 22| CP
     end
-    subgraph A[Account VPC — 172.16.0.0/16]
+    subgraph A[Account VPC — Malaysia — 172.16.0.0/16]
         ALB[Internal Account ALB] -->|HTTP 9090| AC[Account EC2]
     end
-    subgraph S[Statement VPC — 192.168.0.0/16]
+    subgraph S[Statement VPC — Tokyo — 192.168.0.0/16]
         SLB[Internal Statement ALB] -->|HTTP 9090| ST[Statement EC2]
     end
     CP -->|HTTPS 443 over Customer–Account peering| ALB
@@ -78,6 +74,29 @@ Only **Customer ↔ Account** and **Account ↔ Statement** are peered. Customer
 5. The response returns through **Statement → Account → Customer Profile → client**.
 
 Each ALB has an HTTPS listener with a certificate in ACM. HTTPS encrypts the upstream connections from Customer Profile to Account and from Account to Statement as they cross VPC boundaries.
+
+### Regional ALB Certificates
+
+Private CA-signed certificates are imported into ACM in each service's Region and attached to its ALB's HTTPS listener through `certificate_arn`.
+
+| Service | ACM Region | Certificate hostname |
+|---|---|---|
+| Customer Profile | Singapore (`ap-southeast-1`) | `customer.nandaxsr.xyz` |
+| Account | Malaysia (`ap-southeast-5`) | `account.nandaxsr.xyz` |
+| Statement | Tokyo (`ap-northeast-1`) | `statement.nandaxsr.xyz` |
+
+ACM certificates are regional resources, so each ALB uses a certificate from its own Region. Calling clients trust the private CA to validate these HTTPS connections. See [importing certificates into ACM](https://docs.aws.amazon.com/acm/latest/userguide/import-certificate.html).
+
+<details>
+<summary>Certificates in Singapore, Malaysia, and Tokyo</summary>
+
+![Customer certificate in Singapore ACM](assets/sg-certificates.png)
+
+![Account certificate in Malaysia ACM](assets/malaysia-certificates.png)
+
+![Statement certificate in Tokyo ACM](assets/tokyo-certificates.png)
+
+</details>
 
 ### Successful Application Result
 
@@ -195,7 +214,18 @@ Local rules are defined in the [Customer](customer-security-ws/security.tf), [Ac
 
 The application binaries are stored in the three regional S3 artifact buckets listed above, under the object keys `customer-profile`, `account`, and `statement` respectively. Each application retrieves its binary privately through an **S3 gateway VPC endpoint** in its own VPC.
 
-![Application artifacts in S3](assets/s3-artifacts.png)
+![Regional S3 artifact buckets in Singapore, Malaysia, and Tokyo](assets/s3-artifacts.png)
+
+<details>
+<summary>Service binaries in their regional buckets</summary>
+
+![Customer Profile binary in the Singapore bucket](assets/customer-s3-artifacts.png)
+
+![Account binary in the Malaysia bucket](assets/account-s3-artifacts.png)
+
+![Statement binary in the Tokyo bucket](assets/statement-s3-artifacts.png)
+
+</details>
 
 ```text
 Private application instance
@@ -204,9 +234,38 @@ Private application instance
 Private route table → Regional S3 gateway endpoint → Regional S3 artifact bucket
 ```
 
-Each bucket policy authorizes `s3:GetObject` and `s3:ListBucket` through its own service endpoint over HTTPS and explicitly denies reads outside that endpoint or without TLS. Each endpoint policy limits artifact downloads to the binary required by its service. Together, these controls provide private access to the application artifacts without exposing the bucket for public downloads.
+Each bucket policy grants `s3:GetObject` and `s3:ListBucket` access when requests use the matching service VPC endpoint over HTTPS. Each endpoint policy limits downloads to that service's binary. The application retrieves its artifact within its own Region, without an internet or NAT gateway path.
 
 The [artifact bucket policy workspace](artifact-bucket-policy-ws/policy.tf) reads the endpoint IDs from the three network workspaces and maintains a separate policy on each regional bucket. Each VPC has its own gateway endpoint because S3 gateway endpoints cannot be accessed through VPC peering. See [AWS S3 gateway endpoints](https://docs.aws.amazon.com/vpc/latest/privatelink/vpc-endpoints-s3.html).
+
+## Regional SSH Key Management
+
+The public SSH key is stored as **`microservices/ssh-public-key`** in Secrets Manager in Singapore, Malaysia, and Tokyo. Each compute workspace reads the secret from its own Region and creates a regional EC2 key pair named **`microservices-ssh-key`** for its instances.
+
+The workspace's plan/read IAM role needs **`secretsmanager:GetSecretValue`**, scoped to the public-key secret ARN in the service's Region. The apply role also needs this permission when reading the secret. A Singapore secret ARN does not grant access to the Malaysia or Tokyo secret; each role must reference the corresponding regional ARN. See [Secrets Manager read permissions](https://docs.aws.amazon.com/secretsmanager/latest/userguide/auth-and-access_iam-policies.html#auth-and-access_examples_read).
+
+```text
+Regional Secrets Manager public-key secret
+                  │ Terraform reads the public key
+                  ▼
+Regional EC2 key pair: microservices-ssh-key
+                  │ Attached at instance launch
+                  ▼
+          Service EC2 instance
+```
+
+Key pairs are created independently by the [Customer](customer-compute-ws/keypairs.tf), [Account](account-compute-ws/keypairs.tf), and [Statement](statement-compute-ws/keypairs.tf) compute workspaces. None of these workspaces needs another service to create its SSH key first.
+
+<details>
+<summary>SSH secrets in Singapore, Malaysia, and Tokyo</summary>
+
+![SSH secrets in Singapore Secrets Manager](assets/sg-ssh.png)
+
+![SSH secrets in Malaysia Secrets Manager](assets/malaysia-ssh.png)
+
+![SSH secrets in Tokyo Secrets Manager](assets/tokyo-ssh.png)
+
+</details>
 
 ## Remote Execution Workflow
 
@@ -268,7 +327,7 @@ The **trust policy** determines which HCP workspace and phase may assume a role.
 The AWS OIDC provider trusts `https://app.terraform.io`. Role trust conditions restrict the audience and the organization, project, workspace, and run phase. For example, the Customer compute plan role uses a subject with this structure:
 
 ```text
-organization:vpc-peering-intra-region-microservices:project:vcs-driven-project:workspace:customer-compute-ws:run_phase:plan
+organization:vpc-peering-inter-region-microservices:project:Default Project:workspace:customer-compute-ws:run_phase:plan
 ```
 
 The corresponding apply role uses `run_phase:apply`. Names in the trust policy must match the HCP workspace and project. Assign each role the permissions required by its infrastructure layer.
@@ -392,29 +451,32 @@ Each VPC uses its own Resolver and is explicitly associated with the private hos
 
 The [workspace runner](workspace-runner-ws/runs.tf) uses `tfe_workspace_run` and explicit dependencies to run each infrastructure layer after its prerequisites complete:
 
-```text
-Customer network ─┐
-Account network ──┼─→ Regional artifact bucket policies
-Statement network ┘               │
-                      Customer / Account / Statement security
-                                  │
-                              VPC peering
-                                  │
-                           Statement compute
-                                  │
-                        Customer + Account compute
-                                  │
-                              Private DNS
+```mermaid
+flowchart TB
+    CN[Customer network — Singapore] --> BP[Regional artifact bucket policies]
+    AN[Account network — Malaysia] --> BP
+    SN[Statement network — Tokyo] --> BP
+    BP --> CS[Customer security]
+    BP --> AS[Account security]
+    BP --> SS[Statement security]
+    CS --> P[Inter-region VPC peering]
+    AS --> P
+    SS --> P
+    P --> CC[Customer compute — Singapore]
+    P --> AC[Account compute — Malaysia]
+    P --> SC[Statement compute — Tokyo]
+    CC --> DNS[Private DNS]
+    AC --> DNS
+    SC --> DNS
 ```
 
-Each compute workspace creates `microservices-ssh-key` in its own Region from the regional Secrets Manager public-key secret. The existing Statement-first runner order is preserved.
+All three compute workspaces become eligible after peering completes. Each creates its own regional SSH key pair, so **Statement compute no longer needs to run first**. Private DNS waits for all three compute workspaces to finish.
 
 Destroy reverses the dependency graph:
 
 ```text
 Private DNS
-    → Customer + Account compute
-    → Statement compute, including its regional EC2 key pair
+    → Customer, Account, and Statement compute, including their regional EC2 key pairs
     → Peering routes, cross-VPC SG rules, and connections
     → Service security groups
     → Regional bucket policies
@@ -448,6 +510,8 @@ The runner waits for each target to finish before allowing dependent workspaces 
 - [AWS: Private hosted-zone considerations](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/hosted-zone-private-considerations.html)
 - [AWS: Amazon-provided DNS](https://docs.aws.amazon.com/vpc/latest/userguide/AmazonDNS-concepts.html)
 - [AWS: ALB HTTPS listeners](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/create-https-listener.html)
+- [AWS: Importing regional ACM certificates](https://docs.aws.amazon.com/acm/latest/userguide/import-certificate.html)
+- [AWS: Secrets Manager identity-based policies](https://docs.aws.amazon.com/secretsmanager/latest/userguide/auth-and-access_iam-policies.html)
 - [AWS: ALB security policies](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/describe-ssl-policies.html)
 - [HashiCorp: AWS dynamic provider credentials](https://developer.hashicorp.com/terraform/cloud-docs/dynamic-provider-credentials/aws-configuration)
 - [HashiCorp: OPA policy definitions](https://developer.hashicorp.com/terraform/cloud-docs/policy-enforcement/define-policies/opa)
