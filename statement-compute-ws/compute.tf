@@ -7,7 +7,7 @@ resource "aws_instance" "app" {
   vpc_security_group_ids      = [local.security.app_security_group_id]
   #iam_instance_profile        = local.security.instance_profile_name
   key_name = aws_key_pair.app.key_name
-  
+
 
   user_data = templatefile("${path.module}/templates/statement.sh.tftpl", {
     artifacts_bucket = local.network.artifacts_bucket

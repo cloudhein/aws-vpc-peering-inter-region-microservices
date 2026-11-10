@@ -44,9 +44,9 @@ The screenshots below are retained from the original intra-region deployment; th
 
 ## Architecture
 
-![Detailed architecture of the three service VPCs](assets/architecture.png)
+![Detailed architecture of the three service VPCs](assets/VPC-Inter-Region-Peering-Microservices-LLD.png)
 
-[View the full-resolution architecture diagram](assets/architecture.png).
+[View the full-resolution architecture diagram](assets/VPC-Inter-Region-Peering-Microservices-LLD.png).
 
 ```mermaid
 flowchart LR
@@ -388,7 +388,7 @@ Each VPC uses its own Resolver and is explicitly associated with the private hos
 
 ## Workspace Dependencies and Cleanup
 
-![Dependency chain for deployment and teardown](assets/workspace-dependencies.png)
+![Dependency chain for deployment and teardown](assets/VPC-Inter-Region-Peering-Microservices-Dependencies-Chain.png)
 
 The [workspace runner](workspace-runner-ws/runs.tf) uses `tfe_workspace_run` and explicit dependencies to run each infrastructure layer after its prerequisites complete:
 
